@@ -1,0 +1,65 @@
+name: Build Android APK (Capacitor)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect app directory (where package-lock.json is)
+        id: detect
+        run: |
+          set -e
+          APP_DIR="$(find . -name package-lock.json -not -path "*/node_modules/*" -print | head -n 1 | xargs -I{} dirname "{}")"
+          if [ -z "$APP_DIR" ]; then
+            echo "ERROR: package-lock.json not found (outside node_modules)."
+            exit 1
+          fi
+          if [ "$APP_DIR" = "./" ]; then APP_DIR="."; fi
+          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
+          echo "Detected APP_DIR=$APP_DIR"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "${{ env.APP_DIR }}/package-lock.json"
+
+      - name: Install dependencies
+        working-directory: ${{ env.APP_DIR }}
+        run: npm ci
+
+      - name: Build web (Vite)
+        working-directory: ${{ env.APP_DIR }}
+        run: npm run build
+
+      - name: Sync Capacitor Android
+        working-directory: ${{ env.APP_DIR }}
+        run: npx cap sync android
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Debug APK (easy install)
+        working-directory: ${{ env.APP_DIR }}/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ComprasMercado-debug-apk
+          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
