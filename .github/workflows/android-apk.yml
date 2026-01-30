@@ -1,65 +1,71 @@
-name: Build Android APK (Capacitor)
+name: Build Android APK
 
 on:
-  workflow_dispatch:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect app directory (where package-lock.json is)
-        id: detect
+      - name: Show repo tree (debug)
         run: |
-          set -e
-          APP_DIR="$(find . -name package-lock.json -not -path "*/node_modules/*" -print | head -n 1 | xargs -I{} dirname "{}")"
-          if [ -z "$APP_DIR" ]; then
-            echo "ERROR: package-lock.json not found (outside node_modules)."
-            exit 1
-          fi
-          if [ "$APP_DIR" = "./" ]; then APP_DIR="."; fi
-          echo "APP_DIR=$APP_DIR" >> "$GITHUB_ENV"
-          echo "Detected APP_DIR=$APP_DIR"
+          echo "Top-level files:"
+          ls -la
+          echo "Searching for package.json..."
+          find . -maxdepth 5 -name package.json -not -path '*/node_modules/*' -print
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: "${{ env.APP_DIR }}/package-lock.json"
-
-      - name: Install dependencies
-        working-directory: ${{ env.APP_DIR }}
-        run: npm ci
-
-      - name: Build web (Vite)
-        working-directory: ${{ env.APP_DIR }}
-        run: npm run build
-
-      - name: Sync Capacitor Android
-        working-directory: ${{ env.APP_DIR }}
-        run: npx cap sync android
+          node-version: 20
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
-          java-version: "21"
+          distribution: temurin
+          java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Locate app directory (package.json)
+        id: locate
+        run: |
+          APP_PKG="$(find . -maxdepth 5 -name package.json -not -path '*/node_modules/*' | head -n 1)"
+          if [ -z "$APP_PKG" ]; then
+            echo "ERROR: No package.json found within maxdepth=5"
+            exit 1
+          fi
+          APP_DIR="$(dirname "$APP_PKG")"
+          echo "Found package.json at: $APP_PKG"
+          echo "Using app dir: $APP_DIR"
+          echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
 
-      - name: Build Debug APK (easy install)
-        working-directory: ${{ env.APP_DIR }}/android
+      - name: Install deps
+        working-directory: ${{ steps.locate.outputs.app_dir }}
+        run: npm install
+
+      - name: Build web
+        working-directory: ${{ steps.locate.outputs.app_dir }}
+        run: npm run build
+
+      - name: Install Capacitor CLI
+        working-directory: ${{ steps.locate.outputs.app_dir }}
+        run: npm i -D @capacitor/cli
+
+      - name: Sync Capacitor Android
+        working-directory: ${{ steps.locate.outputs.app_dir }}
+        run: npx cap sync android
+
+      - name: Build Debug APK (no signing needed)
+        working-directory: ${{ steps.locate.outputs.app_dir }}/android
         run: ./gradlew assembleDebug
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ComprasMercado-debug-apk
-          path: ${{ env.APP_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          name: app-mercado-apk
+          path: ${{ steps.locate.outputs.app_dir }}/android/app/build/outputs/apk/debug/*.apk
